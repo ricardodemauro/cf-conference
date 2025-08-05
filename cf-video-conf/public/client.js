@@ -1,8 +1,7 @@
-// Guest Conference App - Sends video to host
-class ConferenceApp {
+// Client App - Sends video to host only (no receiving)
+class ClientApp {
     constructor() {
         this.localVideo = null;
-        this.remoteVideo = null;
         this.localStream = null;
         this.peerConnection = null;
         this.isStarted = false;
@@ -39,7 +38,6 @@ class ConferenceApp {
     async setupCamera() {
         try {
             this.localVideo = document.getElementById('local');
-            this.remoteVideo = document.getElementById('remote');
             
             this.localStream = await navigator.mediaDevices.getUserMedia({
                 video: { width: { ideal: 1280 }, height: { ideal: 720 } },
@@ -68,7 +66,7 @@ class ConferenceApp {
             });
 
             const data = await response.json();
-            console.log('Guest joined - will send video to host');
+            console.log('Client joined - ready to send video to host');
 
         } catch (error) {
             console.error('Join error:', error);
@@ -108,6 +106,11 @@ class ConferenceApp {
                     font-size: 16px;
                     cursor: pointer;
                 ">Send Video to Host</button>
+                <div id="status" style="
+                    margin-top: 10px;
+                    color: #666;
+                    font-size: 14px;
+                ">Ready to connect</div>
             </div>
         `;
         
@@ -122,36 +125,23 @@ class ConferenceApp {
         this.createPeerConnection();
         this.isStarted = true;
         
-        // Guest always makes the offer to host
+        // Client always makes the offer to host
         this.makeOffer();
         
         document.getElementById('connect').textContent = 'Connecting to Host...';
         document.getElementById('connect').disabled = true;
+        document.getElementById('status').textContent = 'Establishing connection...';
     }
 
     createPeerConnection() {
         this.peerConnection = new RTCPeerConnection(this.pcConfig);
         
-        // Add local stream
+        // Add local stream (send video to host)
         this.localStream.getTracks().forEach(track => {
             this.peerConnection.addTrack(track, this.localStream);
         });
         
-        // Handle remote stream (optional - host might send back video)
-        this.peerConnection.ontrack = (event) => {
-            if (this.remoteVideo) {
-                this.remoteVideo.srcObject = event.streams[0];
-            }
-            document.getElementById('connect').textContent = 'Connected to Host!';
-            console.log('Connected to host!');
-            
-            // Clean up polling interval once connected
-            if (this.interval) {
-                clearInterval(this.interval);
-                this.interval = null;
-                console.log('Polling stopped - connection established');
-            }
-        };
+        // No ontrack handler - client doesn't receive video
         
         // Handle ICE candidates
         this.peerConnection.onicecandidate = (event) => {
@@ -160,6 +150,44 @@ class ConferenceApp {
                     type: 'candidate',
                     candidate: event.candidate
                 });
+            }
+        };
+
+        // Handle connection state changes
+        this.peerConnection.onconnectionstatechange = () => {
+            console.log('Connection state:', this.peerConnection.connectionState);
+            
+            const connectButton = document.getElementById('connect');
+            const statusDiv = document.getElementById('status');
+            
+            switch (this.peerConnection.connectionState) {
+                case 'connected':
+                    connectButton.textContent = 'Connected to Host!';
+                    connectButton.style.background = '#28a745';
+                    statusDiv.textContent = 'Successfully sending video to host';
+                    statusDiv.style.color = '#28a745';
+                    
+                    // Stop polling once connected
+                    if (this.interval) {
+                        clearInterval(this.interval);
+                        this.interval = null;
+                        console.log('Polling stopped - connection established');
+                    }
+                    break;
+                    
+                case 'connecting':
+                    statusDiv.textContent = 'Connecting to host...';
+                    statusDiv.style.color = '#ffc107';
+                    break;
+                    
+                case 'disconnected':
+                case 'failed':
+                    connectButton.textContent = 'Connection Failed';
+                    connectButton.style.background = '#dc3545';
+                    connectButton.disabled = false;
+                    statusDiv.textContent = 'Connection lost - click to retry';
+                    statusDiv.style.color = '#dc3545';
+                    break;
             }
         };
     }
@@ -180,7 +208,7 @@ class ConferenceApp {
             const messageData = typeof message.data === 'string' ? JSON.parse(message.data) : message.data;
             
             if (message.type === 'answer') {
-                // Guest receives answer from host
+                // Client receives answer from host
                 console.log('Received answer from host');
                 await this.peerConnection.setRemoteDescription(messageData);
                 
@@ -229,5 +257,5 @@ class ConferenceApp {
     }
 }
 
-// Start the app
-new ConferenceApp();    
+// Start the client app
+new ClientApp();    
