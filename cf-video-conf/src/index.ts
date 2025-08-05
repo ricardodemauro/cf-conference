@@ -48,6 +48,20 @@ async function cleanupInactivePeers(env: Env): Promise<void> {
 	`).bind(oneHourAgo).run();
 }
 
+async function cleanAllTables(env: Env): Promise<void> {
+	try {
+		// Clear all messages
+		await env.DB.prepare(`DELETE FROM messages`).run();
+		
+		// Clear all peers
+		await env.DB.prepare(`DELETE FROM peers`).run();
+		
+		console.log('All database tables cleaned for new host session');
+	} catch (error) {
+		console.error('Error cleaning tables:', error);
+	}
+}
+
 async function handleSignaling(request: Request, corsHeaders: Record<string, string>, env: Env): Promise<Response> {
 	if (request.method !== 'POST') {
 		return new Response('Method not allowed', { status: 405, headers: corsHeaders });
@@ -78,11 +92,21 @@ async function handleSignaling(request: Request, corsHeaders: Record<string, str
 }
 
 async function handleSignalingJoin(peerId: string, corsHeaders: Record<string, string>, env: Env): Promise<Response> {
+	// Check if this is a host joining
+	const isHost = peerId.startsWith('HOST_');
+	
+	if (isHost) {
+		console.log('Host joining - cleaning all database tables');
+		await cleanAllTables(env);
+	}
+	
 	// Add peer to database
 	await addPeer(peerId, env);
 	
-	// Clean up inactive peers
-	await cleanupInactivePeers(env);
+	// Clean up inactive peers (if not already cleaned by host)
+	if (!isHost) {
+		await cleanupInactivePeers(env);
+	}
 	
 	// Get current active peer count
 	const peerCount = await getActivePeerCount(env);
