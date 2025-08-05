@@ -4,7 +4,7 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "cf-video-conf",
+	"name": "durable-chat-template",
 	"main": "src/index.ts",
 	"compatibility_date": "2025-08-03",
 	"compatibility_flags": [
