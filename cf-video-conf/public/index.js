@@ -178,6 +178,9 @@ class ConferenceApp {
 
     async handleMessage(message) {
         try {
+            // Parse the data if it's a JSON string
+            const messageData = typeof message.data === 'string' ? JSON.parse(message.data) : message.data;
+            
             if (message.type === 'offer' && !this.isInitiator) {
                 if (!this.isStarted) {
                     this.createPeerConnection();
@@ -186,7 +189,7 @@ class ConferenceApp {
                     document.getElementById('connect').disabled = true;
                 }
                 
-                await this.peerConnection.setRemoteDescription(message.data);
+                await this.peerConnection.setRemoteDescription(messageData);
                 
                 // Process any queued ICE candidates
                 await this.processQueuedCandidates();
@@ -200,7 +203,7 @@ class ConferenceApp {
                 });
                 
             } else if (message.type === 'answer' && this.isInitiator) {
-                await this.peerConnection.setRemoteDescription(message.data);
+                await this.peerConnection.setRemoteDescription(messageData);
                 
                 // Process any queued ICE candidates
                 await this.processQueuedCandidates();
@@ -208,10 +211,10 @@ class ConferenceApp {
             } else if (message.type === 'candidate') {
                 if (this.peerConnection && this.peerConnection.remoteDescription) {
                     // Remote description is set, add candidate immediately
-                    await this.peerConnection.addIceCandidate(message.data);
+                    await this.peerConnection.addIceCandidate(messageData);
                 } else if (this.peerConnection) {
                     // Queue candidate until remote description is set
-                    this.candidateQueue.push(message.data);
+                    this.candidateQueue.push(messageData);
                     console.log('Queued ICE candidate - waiting for remote description');
                 } else {
                     console.log('Ignoring ICE candidate - no peer connection yet');
