@@ -63,6 +63,32 @@
 	<body>
 		<div class="container">
 			<h1>Video Chat Host</h1>
+			<div class="host-controls" style="text-align: center; margin: 20px 0;">
+				<button id="toggle-listening" style="
+					background: #28a745;
+					color: white;
+					border: none;
+					padding: 12px 24px;
+					border-radius: 6px;
+					font-size: 16px;
+					cursor: pointer;
+					margin-right: 10px;
+				">Start Listening</button>
+				<div id="status" style="
+					background: #6c757d;
+					color: white;
+					padding: 8px 16px;
+					border-radius: 6px;
+					font-size: 14px;
+					display: inline-block;
+				">Host Ready - Not Listening</div>
+			</div>
+			<div id="guest-count" style="
+				text-align: center;
+				margin-bottom: 20px;
+				color: #666;
+				font-size: 14px;
+			">Connected guests: 0</div>
 			<div id="videos" class="videos">
 				<!-- Videos will be dynamically added here -->
 			</div>

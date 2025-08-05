@@ -9,6 +9,7 @@ class HostApp {
         this.interval = false;
         this.candidateQueues = new Map(); // Map of peerId -> ICE candidate queue
         this.connectedGuests = 0;
+        this.isListening = false; // Toggle state for listening to new connections
         
         // WebRTC configuration
         this.pcConfig = {
@@ -31,8 +32,8 @@ class HostApp {
     async setup() {
         this.setupVideo();
         this.join();
-        this.startPolling();
         this.setupUI();
+        // Don't start polling automatically - wait for user to toggle
     }
 
     setupVideo() {
@@ -67,6 +68,8 @@ class HostApp {
     }
 
     startPolling() {
+        if (this.interval) return; // Already polling
+        
         this.interval = setInterval(async () => {
             try {
                 const response = await fetch(`/messages?peerId=${this.peerId}&since=${this.lastMessageTimestamp}`);
@@ -83,39 +86,69 @@ class HostApp {
                 console.error('Polling error:', error);
             }
         }, 1000);
+        
+        console.log('Started polling for new connections');
+    }
+
+    stopPolling() {
+        if (this.interval) {
+            clearInterval(this.interval);
+            this.interval = false;
+            console.log('Stopped polling for new connections');
+        }
     }
 
     setupUI() {
-        const container = document.querySelector('.container');
-        const status = document.createElement('div');
-        status.innerHTML = `
-            <div style="text-align: center; margin: 20px 0;">
-                <div id="status" style="
-                    background: #28a745;
-                    color: white;
-                    padding: 12px 24px;
-                    border-radius: 6px;
-                    font-size: 16px;
-                    display: inline-block;
-                ">Host Ready - Waiting for connections</div>
-                <div id="guest-count" style="
-                    margin-top: 10px;
-                    color: #666;
-                    font-size: 14px;
-                ">Connected guests: 0</div>
-            </div>
-        `;
+        this.videosContainer = document.getElementById('videos');
         
-        container.appendChild(status);
+        // Setup toggle button
+        const toggleButton = document.getElementById('toggle-listening');
+        toggleButton.addEventListener('click', () => this.toggleListening());
         
-        // Automatically start accepting connections
-        this.startHosting();
+        this.updateUI();
+    }
+
+    toggleListening() {
+        this.isListening = !this.isListening;
+        
+        if (this.isListening) {
+            this.startPolling();
+        } else {
+            this.stopPolling();
+        }
+        
+        this.updateUI();
+    }
+
+    updateUI() {
+        const toggleButton = document.getElementById('toggle-listening');
+        const statusDiv = document.getElementById('status');
+        
+        if (this.isListening) {
+            toggleButton.textContent = 'Stop Listening';
+            toggleButton.style.background = '#dc3545';
+            statusDiv.textContent = `Host Active - Listening for connections`;
+            statusDiv.style.background = '#28a745';
+        } else {
+            toggleButton.textContent = 'Start Listening';
+            toggleButton.style.background = '#28a745';
+            statusDiv.textContent = 'Host Ready - Not Listening';
+            statusDiv.style.background = '#6c757d';
+        }
     }
 
     updateGuestCount() {
         const countElement = document.getElementById('guest-count');
         if (countElement) {
             countElement.textContent = `Connected guests: ${this.connectedGuests}`;
+        }
+        
+        // Update status to show guest count when listening
+        if (this.isListening) {
+            const statusDiv = document.getElementById('status');
+            if (statusDiv && this.connectedGuests > 0) {
+                statusDiv.textContent = `Host Active - Listening (${this.connectedGuests} connected)`;
+            }
         }
     }
 
@@ -151,19 +184,6 @@ class HostApp {
             this.videoElements.delete(guestId);
             console.log(`Removed video element for guest: ${guestId}`);
         }
-    }
-
-    async startHosting() {
-        console.log('Host is ready to accept connections');
-        
-        // Small delay to ensure join() completes first
-        setTimeout(() => {
-            const statusDiv = document.getElementById('status');
-            if (statusDiv) {
-                statusDiv.textContent = 'Host Active - Ready for guests';
-                statusDiv.style.background = '#28a745';
-            }
-        }, 1000);
     }
 
     createPeerConnection(guestId) {
