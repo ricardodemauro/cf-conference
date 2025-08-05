@@ -10,14 +10,15 @@ class HostApp {
         this.candidateQueues = new Map(); // Map of peerId -> ICE candidate queue
         this.connectedGuests = 0;
         this.isListening = false; // Toggle state for listening to new connections
-        
-        // WebRTC configuration
+
+        // WebRTC configuration - will be updated with dynamic TURN credentials
         this.pcConfig = {
             iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' }
-            ]
+                { urls: 'stun:stun.l.google.com:19302' } // STUN fallback
+            ],
+            iceCandidatePoolSize: 10
         };
-        
+
         this.init();
     }
 
@@ -31,6 +32,7 @@ class HostApp {
 
     async setup() {
         this.setupVideo();
+        await this.fetchTurnCredentials(); // Get dynamic TURN credentials
         this.join();
         this.setupUI();
         // Don't start polling automatically - wait for user to toggle
@@ -49,7 +51,7 @@ class HostApp {
                 statusDiv.textContent = 'Initializing host - cleaning database...';
                 statusDiv.style.background = '#ffc107';
             }
-            
+
             const response = await fetch('/signaling', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -69,7 +71,7 @@ class HostApp {
 
     startPolling() {
         if (this.interval) return; // Already polling
-        
+
         this.interval = setInterval(async () => {
             try {
                 const response = await fetch(`/messages?peerId=${this.peerId}&since=${this.lastMessageTimestamp}`);
@@ -86,7 +88,7 @@ class HostApp {
                 console.error('Polling error:', error);
             }
         }, 1000);
-        
+
         console.log('Started polling for new connections');
     }
 
@@ -100,30 +102,30 @@ class HostApp {
 
     setupUI() {
         this.videosContainer = document.getElementById('videos');
-        
+
         // Setup toggle button
         const toggleButton = document.getElementById('toggle-listening');
         toggleButton.addEventListener('click', () => this.toggleListening());
-        
+
         this.updateUI();
     }
 
     toggleListening() {
         this.isListening = !this.isListening;
-        
+
         if (this.isListening) {
             this.startPolling();
         } else {
             this.stopPolling();
         }
-        
+
         this.updateUI();
     }
 
     updateUI() {
         const toggleButton = document.getElementById('toggle-listening');
         const statusDiv = document.getElementById('status');
-        
+
         if (this.isListening) {
             toggleButton.textContent = 'Stop Listening';
             toggleButton.style.background = '#dc3545';
@@ -142,7 +144,7 @@ class HostApp {
         if (countElement) {
             countElement.textContent = `Connected guests: ${this.connectedGuests}`;
         }
-        
+
         // Update status to show guest count when listening
         if (this.isListening) {
             const statusDiv = document.getElementById('status');
@@ -156,24 +158,24 @@ class HostApp {
         const videoContainer = document.createElement('div');
         videoContainer.className = 'video-container';
         videoContainer.id = `container-${guestId}`;
-        
+
         const video = document.createElement('video');
         video.id = `video-${guestId}`;
         video.autoplay = true;
         video.playsInline = true;
         video.muted = false;
-        
+
         const label = document.createElement('div');
         label.className = 'video-label';
         label.textContent = `Guest: ${guestId.split('_')[1]?.substring(0, 8) || 'Unknown'}`;
-        
+
         videoContainer.appendChild(video);
         videoContainer.appendChild(label);
         this.videosContainer.appendChild(videoContainer);
-        
+
         this.videoElements.set(guestId, video);
         console.log(`Created video element for guest: ${guestId}`);
-        
+
         return video;
     }
 
@@ -188,29 +190,29 @@ class HostApp {
 
     createPeerConnection(guestId) {
         const peerConnection = new RTCPeerConnection(this.pcConfig);
-        
+
         // Host doesn't add local stream - only receives
-        
+
         // Handle remote stream
         peerConnection.ontrack = (event) => {
             console.log(`Received remote stream from guest: ${guestId}`);
-            
+
             let video = this.videoElements.get(guestId);
             if (!video) {
                 video = this.createVideoElement(guestId);
             }
-            
+
             video.srcObject = event.streams[0];
             this.connectedGuests++;
             this.updateGuestCount();
-            
+
             const statusElement = document.getElementById('status');
             if (statusElement) {
                 statusElement.textContent = `Host Active - ${this.connectedGuests} guest(s) connected`;
                 statusElement.style.background = '#007bff';
             }
         };
-        
+
         // Handle ICE candidates
         peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
@@ -224,40 +226,40 @@ class HostApp {
         // Handle connection state changes
         peerConnection.onconnectionstatechange = () => {
             console.log(`Connection state for ${guestId}:`, peerConnection.connectionState);
-            if (peerConnection.connectionState === 'disconnected' || 
+            if (peerConnection.connectionState === 'disconnected' ||
                 peerConnection.connectionState === 'failed' ||
                 peerConnection.connectionState === 'closed') {
-                
+
                 this.handleGuestDisconnection(guestId);
             }
         };
-        
+
         this.peerConnections.set(guestId, peerConnection);
         this.candidateQueues.set(guestId, []);
-        
+
         return peerConnection;
     }
 
     handleGuestDisconnection(guestId) {
         console.log(`Guest disconnected: ${guestId}`);
-        
+
         // Clean up peer connection
         const peerConnection = this.peerConnections.get(guestId);
         if (peerConnection) {
             peerConnection.close();
             this.peerConnections.delete(guestId);
         }
-        
+
         // Remove video element
         this.removeVideoElement(guestId);
-        
+
         // Clean up candidate queue
         this.candidateQueues.delete(guestId);
-        
+
         // Update count
         this.connectedGuests = Math.max(0, this.connectedGuests - 1);
         this.updateGuestCount();
-        
+
         const statusElement = document.getElementById('status');
         if (statusElement) {
             if (this.connectedGuests === 0) {
@@ -274,30 +276,30 @@ class HostApp {
             // Parse the data if it's a JSON string
             const messageData = typeof message.data === 'string' ? JSON.parse(message.data) : message.data;
             const fromGuestId = message.fromPeerId; // This comes from the database query
-            
+
             if (message.type === 'offer') {
                 console.log(`Received offer from guest: ${fromGuestId}`);
-                
+
                 // Create new peer connection for this guest
                 const peerConnection = this.createPeerConnection(fromGuestId);
-                
+
                 await peerConnection.setRemoteDescription(messageData);
-                
+
                 // Process any queued ICE candidates for this guest
                 await this.processQueuedCandidates(fromGuestId);
-                
+
                 // Create answer (host responds to guest's offer)
                 const answer = await peerConnection.createAnswer();
                 await peerConnection.setLocalDescription(answer);
-                
+
                 this.sendMessage({
                     type: 'answer',
                     answer: answer
                 }, fromGuestId);
-                
+
             } else if (message.type === 'candidate') {
                 const peerConnection = this.peerConnections.get(fromGuestId);
-                
+
                 if (peerConnection && peerConnection.remoteDescription) {
                     // Remote description is set, add candidate immediately
                     await peerConnection.addIceCandidate(messageData);
@@ -319,9 +321,9 @@ class HostApp {
     async processQueuedCandidates(guestId) {
         const queue = this.candidateQueues.get(guestId) || [];
         const peerConnection = this.peerConnections.get(guestId);
-        
+
         if (!peerConnection) return;
-        
+
         while (queue.length > 0) {
             const candidate = queue.shift();
             try {
@@ -331,7 +333,7 @@ class HostApp {
                 console.error(`Error adding queued candidate for ${guestId}:`, error);
             }
         }
-        
+
         this.candidateQueues.set(guestId, queue);
     }
 
@@ -346,6 +348,41 @@ class HostApp {
                 targetPeer: targetGuestId // Optional: specify which guest this message is for
             })
         }).catch(error => console.error('Send error:', error));
+    }
+
+    async fetchTurnCredentials() {
+        try {
+            console.log('Fetching TURN credentials...');
+            
+            const response = await fetch('/turn-credentials', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ ttl: 86400 }) // 24 hours
+            });
+
+            if (response.ok) {
+                const turnData = await response.json();
+                
+                // Update pcConfig with dynamic TURN credentials
+                if (turnData.iceServers && turnData.iceServers.length > 0) {
+                    // Keep STUN servers and add dynamic TURN servers
+                    this.pcConfig.iceServers = [
+                        { urls: 'stun:stun.l.google.com:19302' }, // STUN fallback
+                        ...turnData.iceServers
+                    ];
+                    console.log('Updated WebRTC config with dynamic TURN credentials');
+                } else {
+                    console.warn('No ICE servers received from TURN API');
+                }
+            } else {
+                console.warn('Failed to fetch TURN credentials, using STUN only');
+            }
+        } catch (error) {
+            console.error('Error fetching TURN credentials:', error);
+            console.log('Falling back to STUN-only configuration');
+        }
     }
 }
 

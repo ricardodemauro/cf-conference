@@ -12,11 +12,12 @@ class ClientApp {
         this.availableCameras = []; // List of available video devices
         this.currentCameraId = null; // Currently selected camera
         
-        // WebRTC configuration
+        // WebRTC configuration - will be updated with dynamic TURN credentials
         this.pcConfig = {
             iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' }
-            ]
+                { urls: 'stun:stun.l.google.com:19302' } // STUN fallback
+            ],
+            iceCandidatePoolSize: 10
         };
         
         this.init();
@@ -33,6 +34,7 @@ class ClientApp {
     async setup() {
         await this.loadAvailableCameras();
         await this.setupCamera();
+        await this.fetchTurnCredentials(); // Get dynamic TURN credentials
         this.join();
         this.startPolling();
         this.setupUI();
@@ -411,7 +413,42 @@ class ClientApp {
             })
         }).catch(error => console.error('Send error:', error));
     }
+
+    async fetchTurnCredentials() {
+        try {
+            console.log('Fetching TURN credentials...');
+            
+            const response = await fetch('/turn-credentials', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ ttl: 86400 }) // 24 hours
+            });
+
+            if (response.ok) {
+                const turnData = await response.json();
+                
+                // Update pcConfig with dynamic TURN credentials
+                if (turnData.iceServers && turnData.iceServers.length > 0) {
+                    // Keep STUN servers and add dynamic TURN servers
+                    this.pcConfig.iceServers = [
+                        { urls: 'stun:stun.l.google.com:19302' }, // STUN fallback
+                        ...turnData.iceServers
+                    ];
+                    console.log('Updated WebRTC config with dynamic TURN credentials');
+                } else {
+                    console.warn('No ICE servers received from TURN API');
+                }
+            } else {
+                console.warn('Failed to fetch TURN credentials, using STUN only');
+            }
+        } catch (error) {
+            console.error('Error fetching TURN credentials:', error);
+            console.log('Falling back to STUN-only configuration');
+        }
+    }
 }
 
 // Start the client app
-new ClientApp();    
+new ClientApp();

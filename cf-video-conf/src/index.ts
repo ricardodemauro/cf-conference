@@ -11,6 +11,8 @@ interface SignalingMessage {
 
 interface Env {
 	DB: D1Database;
+	TURN_KEY_ID: string;
+	TURN_KEY_API_TOKEN: string;
 }
 
 // Helper functions for peer management
@@ -224,8 +226,83 @@ export default {
 				return handleSignaling(request, corsHeaders, env);
 			case '/messages':
 				return handleMessages(request, corsHeaders, env);
+			case '/turn-credentials':
+				return handleTurnCredentials(request, corsHeaders, env);
 			default:
 				return new Response('Not Found', { status: 404, headers: corsHeaders });
 		}
 	},
 } satisfies ExportedHandler<Env>;
+
+async function handleTurnCredentials(
+	request: Request, 
+	corsHeaders: Record<string, string>, 
+	env: Env
+): Promise<Response> {
+	if (request.method !== 'POST') {
+		return new Response('Method not allowed', { status: 405, headers: corsHeaders });
+	}
+
+	try {
+		// Check if required environment variables are set
+		if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN) {
+			return new Response(JSON.stringify({
+				error: 'TURN credentials not configured'
+			}), {
+				status: 500,
+				headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+			});
+		}
+
+		// Parse request body to get TTL (default to 24 hours)
+		let ttl = 86400; // 24 hours in seconds
+		try {
+			const body = await request.json() as { ttl?: number };
+			if (body.ttl && typeof body.ttl === 'number') {
+				ttl = body.ttl;
+			}
+		} catch {
+			// Use default TTL if no valid JSON body
+		}
+
+		// Call Cloudflare TURN API
+		const response = await fetch(
+			`https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate-ice-servers`,
+			{
+				method: 'POST',
+				headers: {
+					'Authorization': `Bearer ${env.TURN_KEY_API_TOKEN}`,
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify({ ttl })
+			}
+		);
+
+		if (!response.ok) {
+			console.error('Cloudflare TURN API error:', response.status, response.statusText);
+			return new Response(JSON.stringify({
+				error: 'Failed to generate TURN credentials'
+			}), {
+				status: response.status,
+				headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+			});
+		}
+
+		const turnData = await response.json();
+		
+		console.log('Generated TURN credentials successfully');
+
+		return new Response(JSON.stringify(turnData), {
+			headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+		});
+
+	} catch (error) {
+		console.error('TURN credentials error:', error);
+		return new Response(JSON.stringify({
+			error: 'Internal server error'
+		}), {
+			status: 500,
+			headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+		});
+	}
+}

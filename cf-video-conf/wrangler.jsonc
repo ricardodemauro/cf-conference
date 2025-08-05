@@ -22,7 +22,15 @@
 			"database_name": "webrtc-signaling",
 			"database_id": "245f6221-a6e8-42f4-8185-9a01dac78fa7"
 		}
-	]
+	],
+	/**
+	 * Environment Variables
+	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
+	 */
+	"vars": {
+		"TURN_KEY_ID": "TURN_KEY_ID",
+		"TURN_KEY_API_TOKEN": "TURN_KEY_API_TOKEN"
+	}
 	/**
 	 * Smart Placement
 	 * Docs: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
