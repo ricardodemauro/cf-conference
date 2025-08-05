@@ -1,12 +1,10 @@
-// Guest Conference App - Sends video to host
-class ConferenceApp {
+// Host-only Conference App - Receives video streams without camera
+class HostApp {
     constructor() {
-        this.localVideo = null;
         this.remoteVideo = null;
-        this.localStream = null;
         this.peerConnection = null;
         this.isStarted = false;
-        this.peerId = 'GUEST_' + crypto.randomUUID();
+        this.peerId = 'HOST_' + crypto.randomUUID();
         this.lastMessageTimestamp = 0;
         this.interval = false;
         this.candidateQueue = []; // Queue for ICE candidates
@@ -30,30 +28,15 @@ class ConferenceApp {
     }
 
     async setup() {
-        await this.setupCamera();
+        this.setupVideo();
         this.join();
         this.startPolling();
         this.setupUI();
     }
 
-    async setupCamera() {
-        try {
-            this.localVideo = document.getElementById('local');
-            this.remoteVideo = document.getElementById('remote');
-            
-            this.localStream = await navigator.mediaDevices.getUserMedia({
-                video: { width: { ideal: 1280 }, height: { ideal: 720 } },
-                audio: false
-            });
-
-            this.localVideo.srcObject = this.localStream;
-            this.localVideo.muted = true;
-            
-            console.log('Camera ready');
-
-        } catch (error) {
-            console.error('Camera error:', error);
-        }
+    setupVideo() {
+        this.remoteVideo = document.getElementById('remote');
+        console.log('Host ready - waiting for remote streams');
     }
 
     async join() {
@@ -68,7 +51,7 @@ class ConferenceApp {
             });
 
             const data = await response.json();
-            console.log('Guest joined - will send video to host');
+            console.log('Host joined. Will always be initiator for incoming connections');
 
         } catch (error) {
             console.error('Join error:', error);
@@ -96,61 +79,42 @@ class ConferenceApp {
 
     setupUI() {
         const container = document.querySelector('.container');
-        const controls = document.createElement('div');
-        controls.innerHTML = `
+        const status = document.createElement('div');
+        status.innerHTML = `
             <div style="text-align: center; margin: 20px 0;">
-                <button id="connect" style="
-                    background: #007bff;
+                <div id="status" style="
+                    background: #28a745;
                     color: white;
-                    border: none;
                     padding: 12px 24px;
                     border-radius: 6px;
                     font-size: 16px;
-                    cursor: pointer;
-                ">Send Video to Host</button>
+                    display: inline-block;
+                ">Host Ready - Waiting for connections</div>
             </div>
         `;
         
-        container.appendChild(controls);
+        container.appendChild(status);
         
-        document.getElementById('connect').addEventListener('click', () => this.connect());
+        // Automatically start accepting connections
+        this.startHosting();
     }
 
-    async connect() {
-        if (this.isStarted || !this.localStream) return;
-
-        this.createPeerConnection();
-        this.isStarted = true;
-        
-        // Guest always makes the offer to host
-        this.makeOffer();
-        
-        document.getElementById('connect').textContent = 'Connecting to Host...';
-        document.getElementById('connect').disabled = true;
+    async startHosting() {
+        console.log('Host is ready to accept connections');
+        document.getElementById('status').textContent = 'Host Active - Ready for guests';
     }
 
     createPeerConnection() {
         this.peerConnection = new RTCPeerConnection(this.pcConfig);
         
-        // Add local stream
-        this.localStream.getTracks().forEach(track => {
-            this.peerConnection.addTrack(track, this.localStream);
-        });
+        // Host doesn't add local stream - only receives
         
-        // Handle remote stream (optional - host might send back video)
+        // Handle remote stream
         this.peerConnection.ontrack = (event) => {
-            if (this.remoteVideo) {
-                this.remoteVideo.srcObject = event.streams[0];
-            }
-            document.getElementById('connect').textContent = 'Connected to Host!';
-            console.log('Connected to host!');
-            
-            // Clean up polling interval once connected
-            if (this.interval) {
-                clearInterval(this.interval);
-                this.interval = null;
-                console.log('Polling stopped - connection established');
-            }
+            console.log('Received remote stream');
+            this.remoteVideo.srcObject = event.streams[0];
+            document.getElementById('status').textContent = 'Connected - Receiving stream';
+            document.getElementById('status').style.background = '#007bff';
         };
         
         // Handle ICE candidates
@@ -162,16 +126,17 @@ class ConferenceApp {
                 });
             }
         };
-    }
 
-    async makeOffer() {
-        const offer = await this.peerConnection.createOffer();
-        await this.peerConnection.setLocalDescription(offer);
-        
-        this.sendMessage({
-            type: 'offer',
-            offer: offer
-        });
+        // Handle connection state changes
+        this.peerConnection.onconnectionstatechange = () => {
+            console.log('Connection state:', this.peerConnection.connectionState);
+            if (this.peerConnection.connectionState === 'disconnected' || 
+                this.peerConnection.connectionState === 'failed') {
+                document.getElementById('status').textContent = 'Connection lost - Waiting for reconnection';
+                document.getElementById('status').style.background = '#dc3545';
+                this.remoteVideo.srcObject = null;
+            }
+        };
     }
 
     async handleMessage(message) {
@@ -179,13 +144,29 @@ class ConferenceApp {
             // Parse the data if it's a JSON string
             const messageData = typeof message.data === 'string' ? JSON.parse(message.data) : message.data;
             
-            if (message.type === 'answer') {
-                // Guest receives answer from host
-                console.log('Received answer from host');
+            if (message.type === 'offer') {
+                console.log('Received offer from guest');
+                
+                if (!this.isStarted) {
+                    this.createPeerConnection();
+                    this.isStarted = true;
+                    document.getElementById('status').textContent = 'Connecting...';
+                    document.getElementById('status').style.background = '#ffc107';
+                }
+                
                 await this.peerConnection.setRemoteDescription(messageData);
                 
                 // Process any queued ICE candidates
                 await this.processQueuedCandidates();
+                
+                // Create answer (host responds to guest's offer)
+                const answer = await this.peerConnection.createAnswer();
+                await this.peerConnection.setLocalDescription(answer);
+                
+                this.sendMessage({
+                    type: 'answer',
+                    answer: answer
+                });
                 
             } else if (message.type === 'candidate') {
                 if (this.peerConnection && this.peerConnection.remoteDescription) {
@@ -223,11 +204,11 @@ class ConferenceApp {
             body: JSON.stringify({
                 type: message.type,
                 peerId: this.peerId,
-                data: message.offer || message.answer || message.candidate
+                data: message.answer || message.candidate
             })
         }).catch(error => console.error('Send error:', error));
     }
 }
 
-// Start the app
-new ConferenceApp();    
+// Start the host app
+new HostApp();
