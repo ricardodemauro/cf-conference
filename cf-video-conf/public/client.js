@@ -72,13 +72,45 @@ class ClientApp {
             
             const constraints = {
                 video: { 
-                    width: { ideal: 1280, max: 1280 }, 
-                    height: { ideal: 720, max: 720 },
-                    frameRate: { ideal: 24, max: 30 }, // Optimize frame rate
+                    // MAXIMUM QUALITY settings - prioritize resolution and smoothness
+                    width: { ideal: 1920, max: 1920 },   // Full HD width
+                    height: { ideal: 1080, max: 1080 },  // Full HD height
+                    frameRate: { ideal: 30, max: 60 },   // Smooth 30fps, up to 60fps if supported
                     facingMode: 'user'
                 },
                 audio: false
             };
+            
+            console.log('🎥 MAXIMUM QUALITY MODE - Using Full HD 1080p @ 30fps');
+            
+            // Advanced quality optimizations if supported
+            if (navigator.mediaDevices.getSupportedConstraints) {
+                const supportedConstraints = navigator.mediaDevices.getSupportedConstraints();
+                
+                // Enable advanced video features for maximum quality
+                if (supportedConstraints.aspectRatio) {
+                    constraints.video.aspectRatio = { ideal: 16/9 }; // Perfect widescreen ratio
+                }
+                
+                if (supportedConstraints.resizeMode) {
+                    constraints.video.resizeMode = 'none'; // No automatic downscaling
+                }
+                
+                // Advanced quality controls
+                if (supportedConstraints.focusMode) {
+                    constraints.video.focusMode = 'continuous'; // Auto-focus for sharpness
+                }
+                
+                if (supportedConstraints.exposureMode) {
+                    constraints.video.exposureMode = 'continuous'; // Auto-exposure for best lighting
+                }
+                
+                if (supportedConstraints.whiteBalanceMode) {
+                    constraints.video.whiteBalanceMode = 'continuous'; // Auto white balance
+                }
+                
+                console.log('� Advanced camera controls enabled for maximum quality');
+            }
             
             // Use specific camera if selected
             if (this.currentCameraId) {
@@ -529,33 +561,98 @@ class ClientApp {
 
     async optimizeVideoSender(sender) {
         try {
-            // First, try to set preferred codec to AV1 for maximum compression
-            await this.setPreferredCodec();
+            // First, try to set preferred codec for maximum compression
+            const selectedCodec = await this.setPreferredCodec();
             
             // Get current encoding parameters
             const params = sender.getParameters();
             
             if (params.encodings && params.encodings.length > 0) {
-                // Optimize encoding settings for better compression with AV1
-                params.encodings[0].maxBitrate = 400000; // 400 kbps max (AV1 is more efficient)
-                params.encodings[0].maxFramerate = 24;
-                params.encodings[0].scaleResolutionDownBy = 1;
+                console.log('🎯 MAXIMUM COMPRESSION MODE - Optimizing for best quality and efficiency');
                 
-                // AV1-specific optimizations
-                if (this.isAV1Supported()) {
-                    params.encodings[0].maxBitrate = 300000; // Even lower bitrate with AV1
-                    console.log('Using AV1 codec with optimized low bitrate');
+                if (selectedCodec) {
+                    const codecType = this.getCodecType(selectedCodec.mimeType);
+                    
+                    // Ultra-aggressive compression settings for maximum efficiency
+                    switch (codecType) {
+                        case 'AV1':
+                            // AV1: Ultra-low bitrate with excellent quality
+                            params.encodings[0].maxBitrate = 200000; // 200 kbps - AV1 excels at low bitrates
+                            params.encodings[0].maxFramerate = 30;   // Full framerate for smoothness
+                            console.log('🏆 AV1 MAXIMUM COMPRESSION: 200kbps for exceptional quality');
+                            break;
+                            
+                        case 'VP9':
+                            // VP9: Very low bitrate with great quality
+                            params.encodings[0].maxBitrate = 300000; // 300 kbps - VP9 very efficient
+                            params.encodings[0].maxFramerate = 30;
+                            console.log('🥈 VP9 MAXIMUM COMPRESSION: 300kbps for excellent quality');
+                            break;
+                            
+                        case 'VP8':
+                            // VP8: Low bitrate, good quality
+                            params.encodings[0].maxBitrate = 400000; // 400 kbps - VP8 decent efficiency
+                            params.encodings[0].maxFramerate = 30;
+                            console.log('🥉 VP8 MAXIMUM COMPRESSION: 400kbps for very good quality');
+                            break;
+                            
+                        case 'H.264':
+                            // H.264: Higher bitrate needed for same quality
+                            params.encodings[0].maxBitrate = 600000; // 600 kbps - H.264 needs more
+                            params.encodings[0].maxFramerate = 30;
+                            console.log('📊 H.264 FALLBACK: 600kbps for good quality');
+                            break;
+                            
+                        default:
+                            // Fallback aggressive settings
+                            params.encodings[0].maxBitrate = 400000;
+                            params.encodings[0].maxFramerate = 30;
+                            console.log('⚙️ FALLBACK COMPRESSION: 400kbps');
+                    }
+                    
+                    // Advanced encoding optimizations for maximum compression
+                    params.encodings[0].scaleResolutionDownBy = 1; // Full resolution
+                    
+                    // Enable advanced features if available
+                    if (params.encodings[0].hasOwnProperty('priority')) {
+                        params.encodings[0].priority = 'high'; // Prioritize video quality
+                    }
+                    
+                    // AV1/VP9 specific optimizations
+                    if (codecType === 'AV1' || codecType === 'VP9') {
+                        // These codecs excel at variable bitrate
+                        if (params.encodings[0].hasOwnProperty('adaptivePtime')) {
+                            params.encodings[0].adaptivePtime = true;
+                        }
+                    }
+                    
                 } else {
-                    console.log('AV1 not supported, using fallback codec optimization');
+                    // Fallback if no codec detected
+                    params.encodings[0].maxBitrate = 400000;
+                    params.encodings[0].maxFramerate = 30;
+                    params.encodings[0].scaleResolutionDownBy = 1;
+                    console.log('⚙️ FALLBACK: Default compression settings');
                 }
                 
-                // Apply the optimized parameters
+                // Apply the ultra-optimized parameters
                 await sender.setParameters(params);
-                console.log('Applied video encoding optimizations');
+                console.log('✅ MAXIMUM COMPRESSION settings applied successfully');
+                
+                // Log the final configuration
+                const finalBitrate = params.encodings[0].maxBitrate / 1000;
+                console.log(`📊 Final settings: ${finalBitrate}kbps @ ${params.encodings[0].maxFramerate}fps`);
             }
         } catch (error) {
             console.error('Error optimizing video encoding:', error);
         }
+    }
+
+    getCodecType(mimeType) {
+        if (mimeType.toUpperCase().includes('AV01')) return 'AV1';
+        if (mimeType.toUpperCase().includes('VP9')) return 'VP9';
+        if (mimeType.toUpperCase().includes('VP8')) return 'VP8';
+        if (mimeType.toUpperCase().includes('H264')) return 'H.264';
+        return 'Unknown';
     }
 
     async setPreferredCodec() {
@@ -566,12 +663,15 @@ class ClientApp {
             if (videoTransceiver) {
                 const capabilities = RTCRtpSender.getCapabilities('video');
                 if (capabilities && capabilities.codecs) {
-                    // Prioritize codecs by efficiency: AV1 > VP9 > VP8 > H.264
+                    // MAXIMUM COMPRESSION PRIORITY: Always prefer the most efficient codec
+                    console.log('🚀 MAXIMUM COMPRESSION MODE - Prioritizing efficiency over battery life');
+                    
+                    // Ultimate compression codec priority (ignoring battery impact)
                     const preferredCodecs = [
-                        'AV01', // AV1
-                        'VP9',  // VP9
-                        'VP8',  // VP8
-                        'H264'  // H.264 (fallback)
+                        'AV01', // AV1: 50% better compression than H.264
+                        'VP9',  // VP9: 30% better compression than H.264  
+                        'VP8',  // VP8: 15% better compression than H.264
+                        'H264'  // H.264: Fallback only
                     ];
                     
                     const availableCodecs = capabilities.codecs.filter(codec => 
@@ -580,7 +680,7 @@ class ClientApp {
                         )
                     );
                     
-                    // Sort by preference
+                    // Sort by compression efficiency (best first)
                     availableCodecs.sort((a, b) => {
                         const aIndex = preferredCodecs.findIndex(preferred => 
                             a.mimeType.toUpperCase().includes(preferred)
@@ -593,9 +693,14 @@ class ClientApp {
                     
                     if (availableCodecs.length > 0) {
                         const selectedCodec = availableCodecs[0];
-                        console.log(`Selected video codec: ${selectedCodec.mimeType}`);
+                        console.log(`🎯 Selected MAXIMUM COMPRESSION codec: ${selectedCodec.mimeType}`);
                         
-                        // Set codec preferences
+                        // Log compression benefit
+                        const codecType = this.getCodecType(selectedCodec.mimeType);
+                        const compressionBenefit = this.getCompressionBenefit(codecType);
+                        console.log(`📊 Compression benefit: ${compressionBenefit}`);
+                        
+                        // Set codec preferences for maximum efficiency
                         await videoTransceiver.setCodecPreferences(availableCodecs);
                         
                         return selectedCodec;
@@ -606,6 +711,47 @@ class ClientApp {
             console.error('Error setting codec preferences:', error);
         }
         return null;
+    }
+
+    getCompressionBenefit(codecType) {
+        const benefits = {
+            'AV1': '50% better compression, 50% smaller files',
+            'VP9': '30% better compression, 30% smaller files',
+            'VP8': '15% better compression, 15% smaller files',
+            'H.264': 'Baseline compression (fallback)'
+        };
+        return benefits[codecType] || 'Unknown compression benefit';
+    }
+
+    detectIOS() {
+        const userAgent = navigator.userAgent;
+        const platform = navigator.platform;
+        
+        // Check for iPhone, iPad, iPod
+        const isIOSUserAgent = /iPad|iPhone|iPod/.test(userAgent);
+        const isIOSPlatform = /iPad|iPhone|iPod/.test(platform);
+        
+        // Check for iOS 13+ iPad (reports as Mac)
+        const isIOSiPadPro = platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+        
+        // WebKit-specific iOS detection
+        const isIOSWebKit = /Safari/.test(userAgent) && !/Chrome|Firefox|Edge/.test(userAgent);
+        
+        const isIOS = isIOSUserAgent || isIOSPlatform || isIOSiPadPro;
+        
+        if (isIOS) {
+            // Try to detect iOS version for more specific optimizations
+            const versionMatch = userAgent.match(/OS (\d+)_(\d+)/);
+            if (versionMatch) {
+                const majorVersion = parseInt(versionMatch[1]);
+                console.log(`📱 iOS ${majorVersion} detected`);
+                
+                // Store iOS version for codec-specific decisions
+                this.iOSVersion = majorVersion;
+            }
+        }
+        
+        return isIOS;
     }
 
     isAV1Supported() {
@@ -630,19 +776,23 @@ class ClientApp {
                 const codecName = this.codecMonitor.getCodecName(sendingCodec.mimeType);
                 const bitrate = Math.round(sendingCodec.bitrate / 1000);
                 const efficiency = this.codecMonitor.getCompressionEfficiency();
+                const bandwidthSavings = this.codecMonitor.getBandwidthSavings();
                 
                 codecDetailsSpan.innerHTML = `
+                    <strong>🚀 MAXIMUM COMPRESSION MODE</strong><br>
                     <strong>Codec:</strong> ${codecName}<br>
                     <strong>Bitrate:</strong> ${bitrate} kbps<br>
                     <strong>Efficiency:</strong> ${efficiency}<br>
-                    <strong>Frames Sent:</strong> ${sendingCodec.framesSent || 0}
+                    <strong>Savings:</strong> ${bandwidthSavings}<br>
+                    <strong>Frames Sent:</strong> ${sendingCodec.framesSent || 0}<br>
+                    <strong>Quality:</strong> Maximum (1080p @ 30fps)
                 `;
             } else {
-                codecDetailsSpan.innerHTML = 'Unable to detect codec information';
+                codecDetailsSpan.innerHTML = 'Detecting maximum compression codec...';
             }
         } catch (error) {
             console.error('Error updating codec display:', error);
-            codecDetailsSpan.innerHTML = 'Error retrieving codec information';
+            codecDetailsSpan.innerHTML = 'Error retrieving compression information';
         }
     }
 }

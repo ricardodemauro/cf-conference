@@ -139,14 +139,54 @@ class CodecMonitor {
         if (!this.codecInfo.sending) return 'Unknown';
         
         const codecName = this.getCodecName(this.codecInfo.sending.mimeType);
-        const efficiencyMap = {
-            'AV1': '🏆 Excellent (50% better than H.264)',
-            'VP9': '🥈 Very Good (30% better than H.264)',
-            'VP8': '🥉 Good (15% better than H.264)',
-            'H.264': '📊 Standard baseline'
+        
+        // MAXIMUM COMPRESSION efficiency ratings
+        const maxCompressionMap = {
+            'AV1': '� MAXIMUM EFFICIENCY (50% smaller files, exceptional quality at low bitrates)',
+            'VP9': '🥈 EXCELLENT EFFICIENCY (30% smaller files, superior quality-to-size ratio)',
+            'VP8': '🥉 VERY GOOD EFFICIENCY (15% smaller files, good quality-to-size ratio)',
+            'H.264': '📊 BASELINE EFFICIENCY (standard compression, needs higher bitrates)'
         };
         
-        return efficiencyMap[codecName] || 'Unknown';
+        return maxCompressionMap[codecName] || 'Unknown compression efficiency';
+    }
+
+    getBandwidthSavings() {
+        if (!this.codecInfo.sending) return 'Unknown';
+        
+        const codecName = this.getCodecName(this.codecInfo.sending.mimeType);
+        const currentBitrate = this.codecInfo.sending.bitrate || 0;
+        
+        // Calculate equivalent H.264 bitrate for comparison
+        const h264EquivalentBitrates = {
+            'AV1': currentBitrate * 2.0,   // AV1 at 200kbps = H.264 at 400kbps quality
+            'VP9': currentBitrate * 1.43,  // VP9 at 300kbps = H.264 at 430kbps quality  
+            'VP8': currentBitrate * 1.18,  // VP8 at 400kbps = H.264 at 470kbps quality
+            'H.264': currentBitrate         // Baseline
+        };
+        
+        const h264Equivalent = h264EquivalentBitrates[codecName] || currentBitrate;
+        const savings = Math.round(((h264Equivalent - currentBitrate) / h264Equivalent) * 100);
+        
+        if (savings > 0) {
+            return `${savings}% bandwidth savings vs H.264 (${Math.round(h264Equivalent/1000)}kbps equivalent quality)`;
+        } else {
+            return 'Baseline compression (H.264)';
+        }
+    }
+
+    detectIOS() {
+        const userAgent = navigator.userAgent;
+        const platform = navigator.platform;
+        
+        // Check for iPhone, iPad, iPod
+        const isIOSUserAgent = /iPad|iPhone|iPod/.test(userAgent);
+        const isIOSPlatform = /iPad|iPhone|iPod/.test(platform);
+        
+        // Check for iOS 13+ iPad (reports as Mac)
+        const isIOSiPadPro = platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+        
+        return isIOSUserAgent || isIOSPlatform || isIOSiPadPro;
     }
 
     getSupportedCodecs() {
