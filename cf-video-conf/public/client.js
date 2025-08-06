@@ -11,6 +11,7 @@ class ClientApp {
         this.candidateQueue = []; // Queue for ICE candidates
         this.availableCameras = []; // List of available video devices
         this.currentCameraId = null; // Currently selected camera
+        this.codecMonitor = new CodecMonitor(); // Codec monitoring utility
         
         // WebRTC configuration - will be updated with dynamic TURN credentials
         this.pcConfig = {
@@ -71,8 +72,10 @@ class ClientApp {
             
             const constraints = {
                 video: { 
-                    width: { ideal: 1280 }, 
-                    height: { ideal: 720 }
+                    width: { ideal: 1280, max: 1280 }, 
+                    height: { ideal: 720, max: 720 },
+                    frameRate: { ideal: 24, max: 30 }, // Optimize frame rate
+                    facingMode: 'user'
                 },
                 audio: false
             };
@@ -141,22 +144,66 @@ class ClientApp {
     }
 
     startPolling() {
+        let pollInterval = 1000; // Start with 1 second
+        const maxInterval = 5000; // Max 5 seconds
+        let consecutiveEmptyPolls = 0;
+        
         this.interval = setInterval(async () => {
             try {
                 const response = await fetch(`/messages?peerId=${this.peerId}&since=${this.lastMessageTimestamp}`);
                 const data = await response.json();
 
-                if (data.messages?.length > 0) {
-                    for (const message of data.messages) {
+                // Handle both old and new response formats
+                const messages = data.messages || data.m || [];
+                const timestamp = data.timestamp || data.t;
+
+                if (messages.length > 0) {
+                    consecutiveEmptyPolls = 0;
+                    pollInterval = 1000; // Reset to fast polling when active
+                    
+                    for (const message of messages) {
                         await this.handleMessage(message);
+                    }
+                } else {
+                    consecutiveEmptyPolls++;
+                    // Gradually increase polling interval when inactive
+                    if (consecutiveEmptyPolls > 3 && pollInterval < maxInterval) {
+                        pollInterval = Math.min(pollInterval * 1.5, maxInterval);
+                        clearInterval(this.interval);
+                        this.startPollingWithInterval(pollInterval);
+                        return;
                     }
                 }
 
-                this.lastMessageTimestamp = data.timestamp;
+                this.lastMessageTimestamp = timestamp;
             } catch (error) {
                 console.error('Polling error:', error);
             }
-        }, 1000);
+        }, pollInterval);
+    }
+    
+    startPollingWithInterval(interval) {
+        this.interval = setInterval(async () => {
+            try {
+                const response = await fetch(`/messages?peerId=${this.peerId}&since=${this.lastMessageTimestamp}`);
+                const data = await response.json();
+
+                // Handle both old and new response formats
+                const messages = data.messages || data.m || [];
+                const timestamp = data.timestamp || data.t;
+
+                if (messages.length > 0) {
+                    // Switch back to fast polling
+                    clearInterval(this.interval);
+                    this.startPolling();
+                    return;
+                }
+
+                this.lastMessageTimestamp = timestamp;
+            } catch (error) {
+                console.error('Polling error:', error);
+            }
+        }, interval);
     }
 
     setupUI() {
@@ -205,6 +252,19 @@ class ClientApp {
                     color: #666;
                     font-size: 14px;
                 ">Ready to connect</div>
+                <div id="codec-info" style="
+                    margin-top: 10px;
+                    padding: 8px 12px;
+                    background: #f8f9fa;
+                    border-radius: 4px;
+                    font-size: 12px;
+                    color: #666;
+                    border: 1px solid #dee2e6;
+                    display: none;
+                ">
+                    <strong>📊 Codec Information:</strong><br>
+                    <span id="codec-details">Detecting...</span>
+                </div>
             </div>
         `;
         
@@ -294,9 +354,15 @@ class ClientApp {
     createPeerConnection() {
         this.peerConnection = new RTCPeerConnection(this.pcConfig);
         
-        // Add local stream (send video to host)
+        // Add local stream with optimized encoding
         this.localStream.getTracks().forEach(track => {
-            this.peerConnection.addTrack(track, this.localStream);
+            const sender = this.peerConnection.addTrack(track, this.localStream);
+            
+            // Optimize video encoding parameters
+            if (track.kind === 'video') {
+                // Set codec preferences before optimizing sender
+                setTimeout(() => this.optimizeVideoSender(sender), 100);
+            }
         });
         
         // No ontrack handler - client doesn't receive video
@@ -324,6 +390,18 @@ class ClientApp {
                     connectButton.style.background = '#28a745';
                     statusDiv.textContent = 'Successfully sending video to host';
                     statusDiv.style.color = '#28a745';
+                    
+                    // Show codec info panel
+                    const codecInfoDiv = document.getElementById('codec-info');
+                    if (codecInfoDiv) {
+                        codecInfoDiv.style.display = 'block';
+                    }
+                    
+                    // Start codec monitoring
+                    this.codecMonitor.startMonitoring(this.peerConnection, 'client');
+                    
+                    // Update codec info after a short delay
+                    setTimeout(() => this.updateCodecDisplay(), 3000);
                     
                     // Stop polling once connected
                     if (this.interval) {
@@ -446,6 +524,125 @@ class ClientApp {
         } catch (error) {
             console.error('Error fetching TURN credentials:', error);
             console.log('Falling back to STUN-only configuration');
+        }
+    }
+
+    async optimizeVideoSender(sender) {
+        try {
+            // First, try to set preferred codec to AV1 for maximum compression
+            await this.setPreferredCodec();
+            
+            // Get current encoding parameters
+            const params = sender.getParameters();
+            
+            if (params.encodings && params.encodings.length > 0) {
+                // Optimize encoding settings for better compression with AV1
+                params.encodings[0].maxBitrate = 400000; // 400 kbps max (AV1 is more efficient)
+                params.encodings[0].maxFramerate = 24;
+                params.encodings[0].scaleResolutionDownBy = 1;
+                
+                // AV1-specific optimizations
+                if (this.isAV1Supported()) {
+                    params.encodings[0].maxBitrate = 300000; // Even lower bitrate with AV1
+                    console.log('Using AV1 codec with optimized low bitrate');
+                } else {
+                    console.log('AV1 not supported, using fallback codec optimization');
+                }
+                
+                // Apply the optimized parameters
+                await sender.setParameters(params);
+                console.log('Applied video encoding optimizations');
+            }
+        } catch (error) {
+            console.error('Error optimizing video encoding:', error);
+        }
+    }
+
+    async setPreferredCodec() {
+        try {
+            const transceivers = this.peerConnection.getTransceivers();
+            const videoTransceiver = transceivers.find(t => t.sender && t.sender.track && t.sender.track.kind === 'video');
+            
+            if (videoTransceiver) {
+                const capabilities = RTCRtpSender.getCapabilities('video');
+                if (capabilities && capabilities.codecs) {
+                    // Prioritize codecs by efficiency: AV1 > VP9 > VP8 > H.264
+                    const preferredCodecs = [
+                        'AV01', // AV1
+                        'VP9',  // VP9
+                        'VP8',  // VP8
+                        'H264'  // H.264 (fallback)
+                    ];
+                    
+                    const availableCodecs = capabilities.codecs.filter(codec => 
+                        preferredCodecs.some(preferred => 
+                            codec.mimeType.toUpperCase().includes(preferred)
+                        )
+                    );
+                    
+                    // Sort by preference
+                    availableCodecs.sort((a, b) => {
+                        const aIndex = preferredCodecs.findIndex(preferred => 
+                            a.mimeType.toUpperCase().includes(preferred)
+                        );
+                        const bIndex = preferredCodecs.findIndex(preferred => 
+                            b.mimeType.toUpperCase().includes(preferred)
+                        );
+                        return aIndex - bIndex;
+                    });
+                    
+                    if (availableCodecs.length > 0) {
+                        const selectedCodec = availableCodecs[0];
+                        console.log(`Selected video codec: ${selectedCodec.mimeType}`);
+                        
+                        // Set codec preferences
+                        await videoTransceiver.setCodecPreferences(availableCodecs);
+                        
+                        return selectedCodec;
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Error setting codec preferences:', error);
+        }
+        return null;
+    }
+
+    isAV1Supported() {
+        try {
+            const capabilities = RTCRtpSender.getCapabilities('video');
+            return capabilities && capabilities.codecs && 
+                   capabilities.codecs.some(codec => 
+                       codec.mimeType.toUpperCase().includes('AV01')
+                   );
+        } catch (error) {
+            return false;
+        }
+    }
+
+    async updateCodecDisplay() {
+        const codecDetailsSpan = document.getElementById('codec-details');
+        if (!codecDetailsSpan) return;
+
+        try {
+            const sendingCodec = await this.codecMonitor.detectSendingCodec(this.peerConnection);
+            if (sendingCodec) {
+                const codecName = this.codecMonitor.getCodecName(sendingCodec.mimeType);
+                const bitrate = Math.round(sendingCodec.bitrate / 1000);
+                const efficiency = this.codecMonitor.getCompressionEfficiency();
+                
+                codecDetailsSpan.innerHTML = `
+                    <strong>Codec:</strong> ${codecName}<br>
+                    <strong>Bitrate:</strong> ${bitrate} kbps<br>
+                    <strong>Efficiency:</strong> ${efficiency}<br>
+                    <strong>Frames Sent:</strong> ${sendingCodec.framesSent || 0}
+                `;
+            } else {
+                codecDetailsSpan.innerHTML = 'Unable to detect codec information';
+            }
+        } catch (error) {
+            console.error('Error updating codec display:', error);
+            codecDetailsSpan.innerHTML = 'Error retrieving codec information';
         }
     }
 }

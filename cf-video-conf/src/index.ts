@@ -13,6 +13,8 @@ interface Env {
 	DB: D1Database;
 	TURN_KEY_ID: string;
 	TURN_KEY_API_TOKEN: string;
+	readonly SECRET_TURN_KEY_ID: string;
+	readonly SECRET_TURN_KEY_API_TOKEN: string;
 }
 
 // Helper functions for peer management
@@ -164,20 +166,24 @@ async function handleMessages(request: Request, corsHeaders: Record<string, stri
 		// Update peer's last seen timestamp
 		await updatePeerLastSeen(peerId, env);
 		
-		// Get messages from other peers since timestamp
+		// Get messages from other peers since timestamp (with limit for performance)
 		const result = await env.DB.prepare(`
 			SELECT type, data, peer_id as fromPeerId, timestamp
 			FROM messages 
 			WHERE peer_id != ? AND timestamp > ?
 			ORDER BY timestamp ASC
+			LIMIT 50
 		`).bind(peerId, since).all();
 
 		const peerMessages = result.results || [];
 
-		return new Response(JSON.stringify({
-			messages: peerMessages,
-			timestamp: Date.now()
-		}), {
+		// Use compact JSON response
+		const response = JSON.stringify({
+			m: peerMessages, // Shortened property names
+			t: Date.now()
+		});
+
+		return new Response(response, {
 			headers: { ...corsHeaders, 'Content-Type': 'application/json' }
 		});
 	} catch (error) {
@@ -214,6 +220,8 @@ export default {
 			'Access-Control-Allow-Origin': '*',
 			'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 			'Access-Control-Allow-Headers': 'Content-Type',
+			'Content-Encoding': 'gzip', // Enable compression
+			'Cache-Control': 'public, max-age=300', // 5-minute cache for static responses
 		};
 
 		// Handle preflight requests
@@ -245,7 +253,7 @@ async function handleTurnCredentials(
 
 	try {
 		// Check if required environment variables are set
-		if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN) {
+		if (!env.TURN_KEY_ID || !env.SECRET_TURN_KEY_API_TOKEN) {
 			return new Response(JSON.stringify({
 				error: 'TURN credentials not configured'
 			}), {
@@ -271,7 +279,7 @@ async function handleTurnCredentials(
 			{
 				method: 'POST',
 				headers: {
-					'Authorization': `Bearer ${env.TURN_KEY_API_TOKEN}`,
+					'Authorization': `Bearer ${env.SECRET_TURN_KEY_API_TOKEN}`,
 					'Content-Type': 'application/json'
 				},
 				body: JSON.stringify({ ttl })

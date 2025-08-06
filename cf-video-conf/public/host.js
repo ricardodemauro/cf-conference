@@ -10,6 +10,7 @@ class HostApp {
         this.candidateQueues = new Map(); // Map of peerId -> ICE candidate queue
         this.connectedGuests = 0;
         this.isListening = false; // Toggle state for listening to new connections
+        this.codecMonitors = new Map(); // Map of peerId -> CodecMonitor
 
         // WebRTC configuration - will be updated with dynamic TURN credentials
         this.pcConfig = {
@@ -72,22 +73,37 @@ class HostApp {
     startPolling() {
         if (this.interval) return; // Already polling
 
+        let pollInterval = 1000; // Start with 1 second
+        const maxInterval = 3000; // Max 3 seconds for host (needs to be more responsive)
+        let consecutiveEmptyPolls = 0;
+
         this.interval = setInterval(async () => {
             try {
                 const response = await fetch(`/messages?peerId=${this.peerId}&since=${this.lastMessageTimestamp}`);
                 const data = await response.json();
 
-                if (data.messages?.length > 0) {
-                    for (const message of data.messages) {
+                // Handle both old and new response formats
+                const messages = data.messages || data.m || [];
+                const timestamp = data.timestamp || data.t;
+
+                if (messages.length > 0) {
+                    consecutiveEmptyPolls = 0;
+                    for (const message of messages) {
                         await this.handleMessage(message);
+                    }
+                } else {
+                    consecutiveEmptyPolls++;
+                    // Gradually increase polling interval when inactive
+                    if (consecutiveEmptyPolls > 2 && pollInterval < maxInterval) {
+                        pollInterval = Math.min(pollInterval * 1.2, maxInterval);
                     }
                 }
 
-                this.lastMessageTimestamp = data.timestamp;
+                this.lastMessageTimestamp = timestamp;
             } catch (error) {
                 console.error('Polling error:', error);
             }
-        }, 1000);
+        }, pollInterval);
 
         console.log('Started polling for new connections');
     }
@@ -211,6 +227,9 @@ class HostApp {
                 statusElement.textContent = `Host Active - ${this.connectedGuests} guest(s) connected`;
                 statusElement.style.background = '#007bff';
             }
+            
+            // Log codec information for received stream
+            this.logReceivedCodec(event, guestId);
         };
 
         // Handle ICE candidates
@@ -240,6 +259,25 @@ class HostApp {
         return peerConnection;
     }
 
+    async logReceivedCodec(trackEvent, guestId) {
+        try {
+            // Create codec monitor for this guest
+            const codecMonitor = new CodecMonitor();
+            this.codecMonitors.set(guestId, codecMonitor);
+            
+            // Start monitoring after a short delay to allow connection to stabilize
+            setTimeout(() => {
+                const peerConnection = this.peerConnections.get(guestId);
+                if (peerConnection) {
+                    codecMonitor.startMonitoring(peerConnection, 'host');
+                }
+            }, 2000);
+            
+        } catch (error) {
+            console.error('Error setting up codec monitoring:', error);
+        }
+    }
+
     handleGuestDisconnection(guestId) {
         console.log(`Guest disconnected: ${guestId}`);
 
@@ -248,6 +286,13 @@ class HostApp {
         if (peerConnection) {
             peerConnection.close();
             this.peerConnections.delete(guestId);
+        }
+
+        // Stop and clean up codec monitoring
+        const codecMonitor = this.codecMonitors.get(guestId);
+        if (codecMonitor) {
+            codecMonitor.stopMonitoring();
+            this.codecMonitors.delete(guestId);
         }
 
         // Remove video element

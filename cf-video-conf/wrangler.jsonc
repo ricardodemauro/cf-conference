@@ -30,7 +30,12 @@
 	"vars": {
 		"TURN_KEY_ID": "TURN_KEY_ID",
 		"TURN_KEY_API_TOKEN": "TURN_KEY_API_TOKEN"
-	}
+	},
+
+	"secrets_store_secrets": [
+		{ "binding": "SECRET_TURN_KEY_ID", "store_id": "e13b2372098f443fb4402d4319e068a9", "secret_name": "TURN_KEY_ID"  },
+		{ "binding": "SECRET_TURN_KEY_API_TOKEN", "store_id": "e13b2372098f443fb4402d4319e068a9", "secret_name": "TURN_KEY_API_TOKEN"  },
+	],
 	/**
 	 * Smart Placement
 	 * Docs: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
