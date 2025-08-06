@@ -12,6 +12,7 @@ class ClientApp {
         this.availableCameras = []; // List of available video devices
         this.currentCameraId = null; // Currently selected camera
         this.codecMonitor = new CodecMonitor(); // Codec monitoring utility
+        this.smoothnessMonitor = null; // Will be initialized when connection starts
         
         // WebRTC configuration - will be updated with dynamic TURN credentials
         this.pcConfig = {
@@ -61,6 +62,76 @@ class ClientApp {
         }
     }
 
+    async detectDeviceCapabilities() {
+        // Detect device performance and optimal settings for smoothness
+        const capabilities = {
+            optimalFrameRate: 30,
+            supportsVariableFrameRate: false,
+            isHighPerformanceDevice: false,
+            recommendedBitrate: 1000000 // 1 Mbps default
+        };
+
+        try {
+            // Performance detection
+            const startTime = performance.now();
+            let iterations = 0;
+            const testDuration = 50; // 50ms test
+            
+            while (performance.now() - startTime < testDuration) {
+                Math.random() * Math.random();
+                iterations++;
+            }
+            
+            const performanceScore = iterations / 1000;
+            capabilities.isHighPerformanceDevice = performanceScore > 30;
+            
+            // Set optimal frame rate based on device capability
+            if (capabilities.isHighPerformanceDevice) {
+                capabilities.optimalFrameRate = 30; // High-end: smooth 30fps
+                capabilities.supportsVariableFrameRate = true;
+                capabilities.recommendedBitrate = 1500000; // 1.5 Mbps
+                console.log('🚀 High-performance device detected - enabling premium settings');
+            } else {
+                capabilities.optimalFrameRate = 24; // Lower-end: stable 24fps
+                capabilities.recommendedBitrate = 800000; // 800 kbps
+                console.log('📱 Standard device detected - optimizing for stability');
+            }
+            
+            // iOS specific adjustments for smoothness
+                    if (isIOS) {
+                        // iPhone-optimized codec priority: VP9 > H.264 > VP8 (avoid AV1)
+                        console.log('🍎 iPhone detected - using iOS-optimized codec selection with VP9 priority');
+                        preferredCodecs = [
+                            'VP9',  // Primary: Excellent compression with good iOS support (iOS 14.3+)
+                            'H264', // Secondary: Best performance and battery life on iOS
+                            'VP8'   // Fallback: Good compatibility
+                            // Avoid AV1 on iOS - no hardware support, poor performance
+                        ];
+                    } else {
+                        // Desktop/Android: VP9 first for optimal balance
+                        console.log('🖥️ Desktop/Android detected - using VP9-first optimization');
+                        preferredCodecs = [
+                            'VP9',  // Primary: Excellent compression + broad support
+                            'AV01', // Secondary: Maximum compression (desktop/Android)
+                            'VP8',  // Tertiary: Good compression
+                            'H264'  // Fallback: Universal compatibility
+                        ];
+                    }            // Check screen refresh rate hints
+            if (window.screen && window.screen.refreshRate) {
+                const refreshRate = window.screen.refreshRate;
+                if (refreshRate >= 120) {
+                    capabilities.optimalFrameRate = Math.min(30, refreshRate / 4); // High refresh screens
+                    console.log(`📺 High refresh rate display (${refreshRate}Hz) detected`);
+                }
+            }
+            
+        } catch (error) {
+            console.error('Error detecting device capabilities:', error);
+        }
+        
+        return capabilities;
+    }
+
     async setupCamera() {
         try {
             this.localVideo = document.getElementById('local');
@@ -70,18 +141,25 @@ class ClientApp {
                 this.localStream.getTracks().forEach(track => track.stop());
             }
             
+            // Detect device capabilities for optimal settings
+            const deviceCapabilities = await this.detectDeviceCapabilities();
+            
             const constraints = {
                 video: { 
                     // MAXIMUM QUALITY settings - prioritize resolution and smoothness
                     width: { ideal: 1920, max: 1920 },   // Full HD width
                     height: { ideal: 1080, max: 1080 },  // Full HD height
-                    frameRate: { ideal: 30, max: 60 },   // Smooth 30fps, up to 60fps if supported
+                    frameRate: { 
+                        ideal: deviceCapabilities.optimalFrameRate, 
+                        min: Math.max(20, deviceCapabilities.optimalFrameRate - 6),   // Minimum for smoothness
+                        max: Math.min(60, deviceCapabilities.optimalFrameRate + 15)   // Allow higher if supported
+                    },
                     facingMode: 'user'
                 },
                 audio: false
             };
             
-            console.log('🎥 MAXIMUM QUALITY MODE - Using Full HD 1080p @ 30fps');
+            console.log(`🎥 SMOOTH + QUALITY MODE - Using Full HD 1080p @ ${deviceCapabilities.optimalFrameRate}fps (device-optimized)`);
             
             // Advanced quality optimizations if supported
             if (navigator.mediaDevices.getSupportedConstraints) {
@@ -432,6 +510,10 @@ class ClientApp {
                     // Start codec monitoring
                     this.codecMonitor.startMonitoring(this.peerConnection, 'client');
                     
+                    // Start smoothness monitoring for real-time adjustments
+                    this.smoothnessMonitor = new SmoothnessMonitor(this.peerConnection);
+                    this.smoothnessMonitor.startMonitoring();
+                    
                     // Update codec info after a short delay
                     setTimeout(() => this.updateCodecDisplay(), 3000);
                     
@@ -455,6 +537,12 @@ class ClientApp {
                     connectButton.disabled = false;
                     statusDiv.textContent = 'Connection lost - click to retry';
                     statusDiv.style.color = '#dc3545';
+                    
+                    // Stop monitoring on disconnect
+                    if (this.smoothnessMonitor) {
+                        this.smoothnessMonitor.stopMonitoring();
+                        this.smoothnessMonitor = null;
+                    }
                     break;
             }
         };
@@ -564,86 +652,112 @@ class ClientApp {
             // First, try to set preferred codec for maximum compression
             const selectedCodec = await this.setPreferredCodec();
             
+            // Get device capabilities for smoothness optimization
+            const deviceCapabilities = await this.detectDeviceCapabilities();
+            
             // Get current encoding parameters
             const params = sender.getParameters();
             
             if (params.encodings && params.encodings.length > 0) {
-                console.log('🎯 MAXIMUM COMPRESSION MODE - Optimizing for best quality and efficiency');
+                console.log('🎯 SMOOTH + COMPRESSED MODE - Optimizing for best quality and smooth streaming');
                 
                 if (selectedCodec) {
                     const codecType = this.getCodecType(selectedCodec.mimeType);
                     
-                    // Ultra-aggressive compression settings for maximum efficiency
+                    // Smooth compression settings - balance compression with device performance
+                    const baseMultiplier = deviceCapabilities.isHighPerformanceDevice ? 1.2 : 0.8;
+                    
                     switch (codecType) {
-                        case 'AV1':
-                            // AV1: Ultra-low bitrate with excellent quality
-                            params.encodings[0].maxBitrate = 200000; // 200 kbps - AV1 excels at low bitrates
-                            params.encodings[0].maxFramerate = 30;   // Full framerate for smoothness
-                            console.log('🏆 AV1 MAXIMUM COMPRESSION: 200kbps for exceptional quality');
+                        case 'VP9':
+                            // VP9: PRIMARY CHOICE - Great compression with excellent compatibility
+                            params.encodings[0].maxBitrate = Math.round(650000 * baseMultiplier); // 520-780 kbps
+                            params.encodings[0].maxFramerate = deviceCapabilities.optimalFrameRate;
+                            params.encodings[0].minBitrate = Math.round(350000 * baseMultiplier);
+                            console.log(`🥇 VP9 PRIMARY: ${params.encodings[0].maxBitrate/1000}kbps @ ${deviceCapabilities.optimalFrameRate}fps (PREFERRED)`);
                             break;
                             
-                        case 'VP9':
-                            // VP9: Very low bitrate with great quality
-                            params.encodings[0].maxBitrate = 300000; // 300 kbps - VP9 very efficient
-                            params.encodings[0].maxFramerate = 30;
-                            console.log('🥈 VP9 MAXIMUM COMPRESSION: 300kbps for excellent quality');
+                        case 'AV1':
+                            // AV1: Maximum compression for capable devices
+                            params.encodings[0].maxBitrate = Math.round(500000 * baseMultiplier); // 400-600 kbps
+                            params.encodings[0].maxFramerate = deviceCapabilities.optimalFrameRate;
+                            params.encodings[0].minBitrate = Math.round(250000 * baseMultiplier);
+                            console.log(`🏆 AV1 MAXIMUM: ${params.encodings[0].maxBitrate/1000}kbps @ ${deviceCapabilities.optimalFrameRate}fps`);
                             break;
                             
                         case 'VP8':
-                            // VP8: Low bitrate, good quality
-                            params.encodings[0].maxBitrate = 400000; // 400 kbps - VP8 decent efficiency
-                            params.encodings[0].maxFramerate = 30;
-                            console.log('🥉 VP8 MAXIMUM COMPRESSION: 400kbps for very good quality');
+                            // VP8: Good compression, reliable fallback
+                            params.encodings[0].maxBitrate = Math.round(850000 * baseMultiplier); // 680-1020 kbps
+                            params.encodings[0].maxFramerate = deviceCapabilities.optimalFrameRate;
+                            params.encodings[0].minBitrate = Math.round(450000 * baseMultiplier);
+                            console.log(`🥉 VP8 RELIABLE: ${params.encodings[0].maxBitrate/1000}kbps @ ${deviceCapabilities.optimalFrameRate}fps`);
                             break;
                             
                         case 'H.264':
-                            // H.264: Higher bitrate needed for same quality
-                            params.encodings[0].maxBitrate = 600000; // 600 kbps - H.264 needs more
-                            params.encodings[0].maxFramerate = 30;
-                            console.log('📊 H.264 FALLBACK: 600kbps for good quality');
+                            // H.264: Universal compatibility, higher bitrate needed
+                            params.encodings[0].maxBitrate = Math.round(1100000 * baseMultiplier); // 880-1320 kbps
+                            params.encodings[0].maxFramerate = deviceCapabilities.optimalFrameRate;
+                            params.encodings[0].minBitrate = Math.round(600000 * baseMultiplier);
+                            console.log(`📊 H.264 UNIVERSAL: ${params.encodings[0].maxBitrate/1000}kbps @ ${deviceCapabilities.optimalFrameRate}fps`);
                             break;
                             
                         default:
-                            // Fallback aggressive settings
-                            params.encodings[0].maxBitrate = 400000;
-                            params.encodings[0].maxFramerate = 30;
-                            console.log('⚙️ FALLBACK COMPRESSION: 400kbps');
+                            // Fallback smooth settings
+                            params.encodings[0].maxBitrate = Math.round(800000 * baseMultiplier);
+                            params.encodings[0].maxFramerate = deviceCapabilities.optimalFrameRate;
+                            params.encodings[0].minBitrate = Math.round(400000 * baseMultiplier);
+                            console.log(`⚙️ FALLBACK SMOOTH: ${params.encodings[0].maxBitrate/1000}kbps @ ${deviceCapabilities.optimalFrameRate}fps`);
                     }
                     
-                    // Advanced encoding optimizations for maximum compression
+                    // Advanced encoding optimizations for smooth streaming
                     params.encodings[0].scaleResolutionDownBy = 1; // Full resolution
                     
-                    // Enable advanced features if available
+                    // Smoothness-first optimizations
                     if (params.encodings[0].hasOwnProperty('priority')) {
-                        params.encodings[0].priority = 'high'; // Prioritize video quality
+                        params.encodings[0].priority = 'high'; // High priority for smooth delivery
                     }
                     
-                    // AV1/VP9 specific optimizations
-                    if (codecType === 'AV1' || codecType === 'VP9') {
-                        // These codecs excel at variable bitrate
-                        if (params.encodings[0].hasOwnProperty('adaptivePtime')) {
-                            params.encodings[0].adaptivePtime = true;
+                    if (params.encodings[0].hasOwnProperty('networkPriority')) {
+                        params.encodings[0].networkPriority = 'high'; // Network priority for smoothness
+                    }
+                    
+                    // Enable adaptive streaming for better smoothness
+                    if (params.encodings[0].hasOwnProperty('adaptivePtime')) {
+                        params.encodings[0].adaptivePtime = true; // Adaptive packetization
+                    }
+                    
+                    // Frame rate specific optimizations
+                    if (deviceCapabilities.supportsVariableFrameRate) {
+                        // Allow variable frame rate for better quality distribution
+                        if (params.encodings[0].hasOwnProperty('maxQp')) {
+                            params.encodings[0].maxQp = 42; // Balanced quality range
+                        }
+                        if (params.encodings[0].hasOwnProperty('minQp')) {
+                            params.encodings[0].minQp = 15; // Good quality minimum
                         }
                     }
                     
                 } else {
-                    // Fallback if no codec detected
-                    params.encodings[0].maxBitrate = 400000;
-                    params.encodings[0].maxFramerate = 30;
+                    // Fallback smooth settings if no codec detected
+                    const baseMultiplier = deviceCapabilities.isHighPerformanceDevice ? 1.0 : 0.8;
+                    params.encodings[0].maxBitrate = Math.round(800000 * baseMultiplier);
+                    params.encodings[0].maxFramerate = deviceCapabilities.optimalFrameRate;
+                    params.encodings[0].minBitrate = Math.round(400000 * baseMultiplier);
                     params.encodings[0].scaleResolutionDownBy = 1;
-                    console.log('⚙️ FALLBACK: Default compression settings');
+                    console.log(`⚙️ FALLBACK SMOOTH: ${params.encodings[0].maxBitrate/1000}kbps @ ${deviceCapabilities.optimalFrameRate}fps`);
                 }
                 
-                // Apply the ultra-optimized parameters
+                // Apply the smooth-optimized parameters
                 await sender.setParameters(params);
-                console.log('✅ MAXIMUM COMPRESSION settings applied successfully');
+                console.log('✅ SMOOTH + COMPRESSED streaming settings applied successfully');
                 
                 // Log the final configuration
-                const finalBitrate = params.encodings[0].maxBitrate / 1000;
-                console.log(`📊 Final settings: ${finalBitrate}kbps @ ${params.encodings[0].maxFramerate}fps`);
+                const maxBitrate = params.encodings[0].maxBitrate / 1000;
+                const minBitrate = (params.encodings[0].minBitrate || 0) / 1000;
+                console.log(`📊 Final smooth settings: ${minBitrate.toFixed(0)}-${maxBitrate.toFixed(0)}kbps @ ${params.encodings[0].maxFramerate}fps`);
+                
             }
         } catch (error) {
-            console.error('Error optimizing video encoding:', error);
+            console.error('Error optimizing video encoding for smoothness:', error);
         }
     }
 
