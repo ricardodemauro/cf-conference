@@ -13,8 +13,6 @@ interface Env {
 	DB: D1Database;
 	TURN_KEY_ID: string;
 	TURN_KEY_API_TOKEN: string;
-	readonly SECRET_TURN_KEY_ID: string;
-	readonly SECRET_TURN_KEY_API_TOKEN: string;
 }
 
 // Helper functions for peer management
@@ -253,7 +251,7 @@ async function handleTurnCredentials(
 
 	try {
 		// Check if required environment variables are set
-		if (!env.TURN_KEY_ID || !env.SECRET_TURN_KEY_API_TOKEN) {
+		if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN) {
 			return new Response(JSON.stringify({
 				error: 'TURN credentials not configured'
 			}), {
@@ -279,7 +277,7 @@ async function handleTurnCredentials(
 			{
 				method: 'POST',
 				headers: {
-					'Authorization': `Bearer ${env.SECRET_TURN_KEY_API_TOKEN}`,
+					'Authorization': `Bearer ${env.TURN_KEY_API_TOKEN}`,
 					'Content-Type': 'application/json'
 				},
 				body: JSON.stringify({ ttl })
