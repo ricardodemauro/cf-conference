@@ -631,7 +631,7 @@ class ClientApp {
                 if (turnData.iceServers && turnData.iceServers.length > 0) {
                     // Keep STUN servers and add dynamic TURN servers
                     this.pcConfig.iceServers = [
-                        { urls: 'stun:stun.l.google.com:19302' }, // STUN fallback
+                        //{ urls: 'stun:stun.l.google.com:19302' }, // STUN fallback
                         ...turnData.iceServers
                     ];
                     console.log('Updated WebRTC config with dynamic TURN credentials');
