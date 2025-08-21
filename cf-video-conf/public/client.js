@@ -5,13 +5,12 @@ class ClientApp {
         this.localStream = null;
         this.peerConnection = null;
         this.isStarted = false;
-        this.peerId = 'GUEST_' + crypto.randomUUID();
+        this.peerId = window.naming();
         this.lastMessageTimestamp = 0;
         this.interval = false;
         this.candidateQueue = []; // Queue for ICE candidates
         this.availableCameras = []; // List of available video devices
         this.currentCameraId = null; // Currently selected camera
-        this.codecMonitor = new CodecMonitor(); // Codec monitoring utility
         this.smoothnessMonitor = null; // Will be initialized when connection starts
 
         this.baseAddress = 'https://conf.rmauro.dev';
@@ -519,15 +518,9 @@ class ClientApp {
                         codecInfoDiv.style.display = 'block';
                     }
 
-                    // Start codec monitoring
-                    this.codecMonitor.startMonitoring(this.peerConnection, 'client');
-
                     // Start smoothness monitoring for real-time adjustments
                     this.smoothnessMonitor = new SmoothnessMonitor(this.peerConnection);
                     this.smoothnessMonitor.startMonitoring();
-
-                    // Update codec info after a short delay
-                    setTimeout(() => this.updateCodecDisplay(), 3000);
 
                     // Stop polling once connected
                     if (this.interval) {
@@ -677,7 +670,7 @@ class ClientApp {
                     const codecType = this.getCodecType(selectedCodec.mimeType);
 
                     // Smooth compression settings - balance compression with device performance
-                    const baseMultiplier = deviceCapabilities.isHighPerformanceDevice ? 1.2 : 0.8;
+                    const baseMultiplier = true ? 1.2 : 0.8;
 
                     switch (codecType) {
                         case 'VP9':
@@ -889,36 +882,6 @@ class ClientApp {
                 );
         } catch (error) {
             return false;
-        }
-    }
-
-    async updateCodecDisplay() {
-        const codecDetailsSpan = document.getElementById('codec-details');
-        if (!codecDetailsSpan) return;
-
-        try {
-            const sendingCodec = await this.codecMonitor.detectSendingCodec(this.peerConnection);
-            if (sendingCodec) {
-                const codecName = this.codecMonitor.getCodecName(sendingCodec.mimeType);
-                const bitrate = Math.round(sendingCodec.bitrate / 1000);
-                const efficiency = this.codecMonitor.getCompressionEfficiency();
-                const bandwidthSavings = this.codecMonitor.getBandwidthSavings();
-
-                codecDetailsSpan.innerHTML = `
-                    <strong>🚀 MAXIMUM COMPRESSION MODE</strong><br>
-                    <strong>Codec:</strong> ${codecName}<br>
-                    <strong>Bitrate:</strong> ${bitrate} kbps<br>
-                    <strong>Efficiency:</strong> ${efficiency}<br>
-                    <strong>Savings:</strong> ${bandwidthSavings}<br>
-                    <strong>Frames Sent:</strong> ${sendingCodec.framesSent || 0}<br>
-                    <strong>Quality:</strong> Maximum (1080p @ 30fps)
-                `;
-            } else {
-                codecDetailsSpan.innerHTML = 'Detecting maximum compression codec...';
-            }
-        } catch (error) {
-            console.error('Error updating codec display:', error);
-            codecDetailsSpan.innerHTML = 'Error retrieving compression information';
         }
     }
 }
